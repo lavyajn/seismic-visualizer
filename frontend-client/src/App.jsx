@@ -1,7 +1,6 @@
 import React, { useRef, useMemo, useEffect, useState } from 'react';
 import { Canvas, useFrame, useLoader, useThree } from '@react-three/fiber';
 import { OrbitControls, Stars, Html } from '@react-three/drei';
-import { EffectComposer, Bloom } from '@react-three/postprocessing';
 import * as THREE from 'three';
 
 // --- CONFIGURATION ---
@@ -33,7 +32,7 @@ const rippleFragmentShader = `
   }
 `;
 
-// --- THE MATH VAULT ---
+// --- UTILS ---
 const latLongToVector3 = (lat, lng, radius, depthKm = 0) => {
   const phi = (90 - lat) * (Math.PI / 180);
   const theta = (lng + 180) * (Math.PI / 180);
@@ -44,9 +43,8 @@ const latLongToVector3 = (lat, lng, radius, depthKm = 0) => {
   return new THREE.Vector3(x, y, z);
 };
 
-// Haversine Formula for spherical distance calculation
 const calculateHaversineDistance = (lat1, lon1, lat2, lon2) => {
-  const R = 6371; // Earth's radius in kilometers
+  const R = 6371; 
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
   const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
@@ -61,7 +59,6 @@ const formatUTCTime = (timestamp) => {
   return new Date(timestamp).toLocaleTimeString('en-US', { hour12: false, timeZone: 'UTC', hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' UTC';
 };
 
-// --- HOT ZONES ---
 const REGIONAL_JUMPS = [
   { name: 'RING OF FIRE', lat: 35.0, lng: 140.0 },
   { name: 'SAN ANDREAS', lat: 36.0, lng: -120.0 },
@@ -77,12 +74,11 @@ const ViewportAdjuster = () => {
     const rightSidebarWidth = 100; 
     camera.setViewOffset(size.width, size.height, rightSidebarWidth / 2, 0, size.width, size.height);
     camera.updateProjectionMatrix();
-    return () => camera.clearViewOffset();
+    return () => { camera.clearViewOffset(); };
   }, [camera, size]);
   return null;
 };
 
-// Refactored to accept raw coordinates instead of a quake object
 const CameraRig = ({ targetCoords }) => {
   const { camera } = useThree();
   const targetPos = useRef(new THREE.Vector3(0, 0, 6)); 
@@ -127,23 +123,79 @@ const Globe = () => {
   );
 };
 
-const TectonicPlates = () => {
+// THE HOLLYWOOD TECTONIC LOGIC
+const TectonicPlates = ({ targetCoords }) => {
   const [plateLines, setPlateLines] = useState([]);
+  
   useEffect(() => {
     fetch(TECTONIC_PLATES_URL).then(res => res.json()).then(data => {
       setPlateLines(data.features.map(f => f.geometry.coordinates.map(c => latLongToVector3(c[1], c[0], GLOBE_RADIUS + 0.002))));
     }).catch(e => console.error(e));
   }, []);
+
+  // Convert the current target to a 3D vector so we can measure distance
+  const targetVec = useMemo(() => {
+    if (!targetCoords) return null;
+    return latLongToVector3(targetCoords.lat, targetCoords.lng, GLOBE_RADIUS);
+  }, [targetCoords]);
+
   return (
     <group>
-      {plateLines.map((points, i) => (
-        <line key={i} geometry={new THREE.BufferGeometry().setFromPoints(points)}>
-          <lineBasicMaterial color="#ff6600" transparent={true} opacity={0.8} blending={THREE.AdditiveBlending} />
-        </line>
-      ))}
+      {plateLines.map((points, i) => {
+        // We calculate if this specific fault line is near the camera's target
+        let isHighlighted = false;
+        if (targetVec && points.length > 0) {
+          // If the start of the line is within 1.0 units (about 3000km) of the target, light it up
+          isHighlighted = points[0].distanceTo(targetVec) < 1.0;
+        }
+
+        // Highlighted lines turn bright white/cyan and pop out. Normal lines stay dim orange.
+        const lineColor = isHighlighted ? '#00ffff' : '#ff6600';
+        const lineOpacity = isHighlighted ? 1.0 : (targetVec ? 0.15 : 0.6); // Dim the background lines if a target is active
+
+        return (
+          <line key={i} geometry={new THREE.BufferGeometry().setFromPoints(points)}>
+            <lineBasicMaterial color={lineColor} transparent={true} opacity={lineOpacity} blending={THREE.AdditiveBlending} />
+          </line>
+        )
+      })}
     </group>
   );
 };
+
+// NEW: A tactical target lock reticle for the regions
+const RegionalReticle = ({ targetCoords }) => {
+  const meshRef = useRef();
+  
+  const pos = useMemo(() => {
+    if (!targetCoords) return null;
+    // We add a tiny offset (0.01) so it sits just above the fault lines
+    return latLongToVector3(targetCoords.lat, targetCoords.lng, GLOBE_RADIUS + 0.01);
+  }, [targetCoords]);
+
+  useFrame((state) => {
+    if (!meshRef.current) return;
+    // Makes the reticle pulse by scaling it up and down using a sine wave
+    const scale = 1.0 + Math.sin(state.clock.elapsedTime * 4) * 0.2;
+    meshRef.current.scale.set(scale, scale, 1);
+  });
+
+  if (!pos) return null;
+
+  return (
+    <group position={pos} onUpdate={self => self.lookAt(0,0,0)}>
+      <mesh ref={meshRef}>
+        <ringGeometry args={[0.2, 0.22, 32]} />
+        <meshBasicMaterial color="#00ffff" side={THREE.DoubleSide} transparent opacity={0.8} blending={THREE.AdditiveBlending} depthWrite={false} />
+      </mesh>
+      {/* A crosshair dot in the middle */}
+      <mesh>
+        <circleGeometry args={[0.02, 16]} />
+        <meshBasicMaterial color="#00ffff" transparent opacity={0.8} blending={THREE.AdditiveBlending} depthWrite={false}/>
+      </mesh>
+    </group>
+  );
+}
 
 const QuakeRipple = ({ quake, activeQuake, triggerQuakeSelect, userLocation }) => {
   const meshRef = useRef();
@@ -189,7 +241,6 @@ const QuakeRipple = ({ quake, activeQuake, triggerQuakeSelect, userLocation }) =
     }
   });
 
-  // Calculate distance if we have the user's physical GPS location
   const distanceToUser = useMemo(() => {
     if (!userLocation) return null;
     return calculateHaversineDistance(userLocation.lat, userLocation.lng, latitude, longitude);
@@ -240,7 +291,6 @@ const QuakeRipple = ({ quake, activeQuake, triggerQuakeSelect, userLocation }) =
                     <div><span className="text-slate-400 font-mono text-xs block">DEPTH</span><span className="text-lg font-bold text-slate-200">{depth.toFixed(1)} <span className="text-sm font-normal">km</span></span></div>
                 </div>
 
-                {/* THE PROXIMITY SENSOR (Haversine Output) */}
                 {distanceToUser && (
                   <div className="mt-2 bg-slate-800/50 border border-slate-700 p-2 rounded text-center">
                     <span className="text-slate-400 font-mono text-[10px] block uppercase tracking-widest">Distance To You</span>
@@ -261,13 +311,16 @@ export default function App() {
   const [lastJsonMessage, setLastJsonMessage] = useState(null);
   const [readyState, setReadyState] = useState(0);
   const [activeQuake, setActiveQuake] = useState(null); 
-  const [cameraTarget, setCameraTarget] = useState(null); // Decoupled Camera Target
+  const [cameraTarget, setCameraTarget] = useState(null); 
+  
+  // NEW: State to track if we are in "Region Hover" mode to render the reticle
+  const [activeRegion, setActiveRegion] = useState(null);
+
   const [userLocation, setUserLocation] = useState(null);
   
   const wsRef = useRef(null); 
   const [filterMode, setFilterMode] = useState('ALL');
 
-  // Trigger GPS locator on mount
   useEffect(() => {
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
@@ -309,17 +362,18 @@ export default function App() {
     }
   };
 
-  // Controller function to handle quakes vs regions
   const triggerQuakeSelect = (quake) => {
     setActiveQuake(quake);
+    setActiveRegion(null); // Clear the regional reticle if a specific quake is clicked
     if (quake) {
       setCameraTarget({ lat: quake.coordinates.latitude, lng: quake.coordinates.longitude });
     }
   };
 
   const triggerRegionalJump = (region) => {
-    setActiveQuake(null); // Clear the HUD
-    setCameraTarget({ lat: region.lat, lng: region.lng }); // Fly the drone
+    setActiveQuake(null); 
+    setActiveRegion(region); // Set the region to trigger the reticle and plate highlights
+    setCameraTarget({ lat: region.lat, lng: region.lng }); 
   };
 
   const earthquakeData = lastJsonMessage?.events || [];
@@ -391,7 +445,6 @@ export default function App() {
                </div>
             </div>
 
-            {/* NEW: TACTICAL REGIONAL OVERRIDES */}
             <div className="mt-4 pt-3 border-t border-slate-700">
                <h3 className="text-slate-500 text-[10px] font-bold uppercase tracking-widest mb-2">Tactical Overrides</h3>
                <div className="grid grid-cols-2 gap-1">
@@ -399,7 +452,11 @@ export default function App() {
                     <button 
                       key={region.name}
                       onClick={() => triggerRegionalJump(region)}
-                      className="py-1.5 px-2 text-[10px] font-bold uppercase tracking-widest rounded bg-slate-800 text-slate-400 border border-slate-700 hover:bg-blue-900/30 hover:border-blue-500 hover:text-blue-300 transition-colors"
+                      className={`py-1.5 px-2 text-[10px] font-bold uppercase tracking-widest rounded transition-colors ${
+                        activeRegion?.name === region.name 
+                          ? 'bg-cyan-900/50 border border-cyan-400 text-cyan-300' 
+                          : 'bg-slate-800 text-slate-400 border border-slate-700 hover:bg-blue-900/30 hover:border-blue-500 hover:text-blue-300'
+                      }`}
                     >
                       {region.name}
                     </button>
@@ -469,7 +526,13 @@ export default function App() {
           <React.Suspense fallback={<mesh><sphereGeometry args={[GLOBE_RADIUS, 16, 16]} /><meshBasicMaterial color="gray" wireframe /></mesh>}>
             <Globe />
           </React.Suspense>
-          <TectonicPlates />
+          
+          {/* We pass the activeRegion down so the plates know what to highlight */}
+          <TectonicPlates targetCoords={activeRegion} />
+          
+          {/* The glowing target lock reticle */}
+          {activeRegion && <RegionalReticle targetCoords={activeRegion} />}
+
           {visibleQuakes.map((quake) => (
             <QuakeRipple key={quake.id} quake={quake} activeQuake={activeQuake} triggerQuakeSelect={triggerQuakeSelect} userLocation={userLocation} />
           ))}
