@@ -17,49 +17,17 @@ const TEXTURES = {
 const TECTONIC_PLATES_URL = 'https://raw.githubusercontent.com/fraxen/tectonicplates/master/GeoJSON/PB2002_boundaries.json';
 
 // --- GLSL SHADERS ---
-
-const atmosphereVertexShader = `
-  varying vec3 vNormal;
-  void main() {
-    vNormal = normalize(normalMatrix * normal);
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }
-`;
-const atmosphereFragmentShader = `
-  varying vec3 vNormal;
-  void main() {
-    float intensity = pow(0.65 - dot(vNormal, vec3(0, 0, 1.0)), 4.0);
-    gl_FragColor = vec4(0.3, 0.6, 1.0, 1.0) * intensity;
-  }
-`;
-
-// FIXED LIQUID SHADER
-const rippleVertexShader = `
-  varying vec2 vUv;
-  void main() {
-    vUv = uv;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }
-`;
+const atmosphereVertexShader = ` varying vec3 vNormal; void main() { vNormal = normalize(normalMatrix * normal); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); } `;
+const atmosphereFragmentShader = ` varying vec3 vNormal; void main() { float intensity = pow(0.65 - dot(vNormal, vec3(0, 0, 1.0)), 4.0); gl_FragColor = vec4(0.3, 0.6, 1.0, 1.0) * intensity; } `;
+const rippleVertexShader = ` varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); } `;
 const rippleFragmentShader = `
-  uniform vec3 uColor;
-  uniform float time;
-  varying vec2 vUv;
-
+  uniform vec3 uColor; uniform float time; varying vec2 vUv;
   void main() {
     float dist = distance(vUv, vec2(0.5));
     if (dist > 0.5) discard;
-    
-    // Concentric expanding liquid rings
     float wave = sin((dist * 30.0) - (time * 5.0));
-    
-    // Sharpen the peaks of the waves so they look distinct and bright
     wave = smoothstep(0.6, 1.0, wave);
-    
-    // Fade out smoothly at the edge, and fade out the direct center
     float edgeFade = smoothstep(0.5, 0.2, dist) * smoothstep(0.0, 0.1, dist);
-    
-    // Push the assigned color with a strong alpha
     gl_FragColor = vec4(uColor, wave * edgeFade * 0.95);
   }
 `;
@@ -77,12 +45,28 @@ const latLongToVector3 = (lat, lng, radius, depthKm = 0) => {
 
 const formatUTCTime = (timestamp) => {
   if (!timestamp) return 'WAITING...';
-  return new Date(timestamp).toLocaleTimeString('en-US', { 
-    hour12: false, timeZone: 'UTC', hour: '2-digit', minute: '2-digit', second: '2-digit'
-  }) + ' UTC';
+  return new Date(timestamp).toLocaleTimeString('en-US', { hour12: false, timeZone: 'UTC', hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' UTC';
 };
 
 // --- COMPONENTS ---
+
+// NEW: Shifts the 3D projection matrix left to account for the 384px sidebar
+const ViewportAdjuster = () => {
+  const { camera, size } = useThree();
+  useEffect(() => {
+    // camera.setViewOffset(fullWidth, fullHeight, x, y, width, height)
+    // We shift the camera's principal point horizontally by half the sidebar's width
+    const rightSidebarWidth = 100; 
+    camera.setViewOffset(size.width, size.height, rightSidebarWidth / 2, 0, size.width, size.height);
+    camera.updateProjectionMatrix();
+
+    return () => {
+      camera.clearViewOffset();
+    };
+  }, [camera, size]);
+  
+  return null;
+};
 
 const CameraRig = ({ activeQuake }) => {
   const { camera } = useThree();
@@ -93,7 +77,6 @@ const CameraRig = ({ activeQuake }) => {
     if (activeQuake) {
       const { latitude, longitude } = activeQuake.coordinates;
       const surfacePos = latLongToVector3(latitude, longitude, GLOBE_RADIUS);
-      // Pushed camera even further back (5.5) so the tethered HUD fits on screen
       targetPos.current.copy(surfacePos).normalize().multiplyScalar(5.5);
       isFlying.current = true;
     }
@@ -102,21 +85,16 @@ const CameraRig = ({ activeQuake }) => {
   useFrame(() => {
     if (isFlying.current) {
       camera.position.lerp(targetPos.current, 0.015);
-      if (camera.position.distanceTo(targetPos.current) < 0.1) {
-        isFlying.current = false;
-      }
+      if (camera.position.distanceTo(targetPos.current) < 0.1) isFlying.current = false;
     }
   });
   return null;
 };
 
 const Globe = () => {
-  const [colorMap, normalMap, waterMap, cloudMap] = useLoader(THREE.TextureLoader, [
-    TEXTURES.color, TEXTURES.normal, TEXTURES.water, TEXTURES.clouds
-  ]);
+  const [colorMap, normalMap, waterMap, cloudMap] = useLoader(THREE.TextureLoader, [TEXTURES.color, TEXTURES.normal, TEXTURES.water, TEXTURES.clouds]);
   const cloudsRef = useRef();
   useFrame(() => { if (cloudsRef.current) cloudsRef.current.rotation.y += 0.00005; });
-
   return (
     <group>
       <mesh receiveShadow castShadow>
@@ -138,20 +116,14 @@ const Globe = () => {
 const TectonicPlates = () => {
   const [plateLines, setPlateLines] = useState([]);
   useEffect(() => {
-    fetch(TECTONIC_PLATES_URL)
-      .then(res => res.json())
-      .then(data => {
-        const lines = data.features.map(feature => 
-          feature.geometry.coordinates.map(c => latLongToVector3(c[1], c[0], GLOBE_RADIUS + 0.002))
-        );
-        setPlateLines(lines);
-      }).catch(err => console.error("Failed to load tectonic plates", err));
+    fetch(TECTONIC_PLATES_URL).then(res => res.json()).then(data => {
+      setPlateLines(data.features.map(f => f.geometry.coordinates.map(c => latLongToVector3(c[1], c[0], GLOBE_RADIUS + 0.002))));
+    }).catch(e => console.error(e));
   }, []);
-
   return (
     <group>
-      {plateLines.map((points, index) => (
-        <line key={index} geometry={new THREE.BufferGeometry().setFromPoints(points)}>
+      {plateLines.map((points, i) => (
+        <line key={i} geometry={new THREE.BufferGeometry().setFromPoints(points)}>
           <lineBasicMaterial color="#ff4400" transparent={true} opacity={0.3} blending={THREE.AdditiveBlending} />
         </line>
       ))}
@@ -169,143 +141,73 @@ const QuakeRipple = ({ quake, activeQuake, setActiveQuake }) => {
   const { latitude, longitude, depth } = quake.coordinates;
   const mag = quake.magnitude;
   const isActive = activeQuake?.id === quake.id;
-  const hasTsunami = quake.tsunami === 1; // It's back.
+  const hasTsunami = quake.tsunami === 1; 
   
-  const pos = useMemo(() => latLongToVector3(latitude, longitude, GLOBE_RADIUS + 0.008, depth), [latitude, longitude, depth]);
-  
-  // Base scale significantly increased so they are visible
+  const pos = useMemo(() => latLongToVector3(latitude, longitude, GLOBE_RADIUS + 0.008), [latitude, longitude]);
   const baseScale = useMemo(() => Math.max(0.08, mag * 0.04), [mag]);
   
-  const rippleColorStr = useMemo(() => {
-    if (mag > 5) return '#ff0000';
-    if (mag > 3) return '#ffaa00';
-    return '#00ffaa';
-  }, [mag]);
-
-  const uniforms = useMemo(() => ({
-    uColor: { value: new THREE.Color(rippleColorStr) },
-    time: { value: 0 }
-  }), [rippleColorStr]);
-
+  const rippleColorStr = useMemo(() => mag > 5 ? '#ff0000' : mag > 3 ? '#ffaa00' : '#00ffaa', [mag]);
+  const uniforms = useMemo(() => ({ uColor: { value: new THREE.Color(rippleColorStr) }, time: { value: 0 } }), [rippleColorStr]);
   const timeOffset = useMemo(() => Math.random() * 5, []);
 
-  // Calculate the physical tether line pointing outward into space
-  const tetherPoints = useMemo(() => [
-    new THREE.Vector3(0, 0, 0),       // Starts at the crust
-    new THREE.Vector3(0, 0, -1.8)     // Ends 1.8 units away in space (Z is inverted relative to the planet core)
-  ], []);
-  const tetherGeom = useMemo(() => new THREE.BufferGeometry().setFromPoints(tetherPoints), [tetherPoints]);
+  const tetherGeom = useMemo(() => new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-1.8)]), []);
 
-  useEffect(() => {
-    document.body.style.cursor = hovered ? 'pointer' : 'auto';
-  }, [hovered]);
+  useEffect(() => { document.body.style.cursor = hovered ? 'pointer' : 'auto'; }, [hovered]);
 
   useFrame((state) => {
     if (!meshRef.current || !materialRef.current) return;
     const time = state.clock.getElapsedTime();
-
-    // Pump time into the liquid shader
     materialRef.current.uniforms.time.value = time;
-
-    // Expand the ripple slightly on hover/active
     const targetScale = (isActive || hovered) ? baseScale * 1.5 : baseScale;
     meshRef.current.scale.lerp(new THREE.Vector3(targetScale, targetScale, 1), 0.1);
 
-    // Re-implemented Tsunami logic
     if (hasTsunami && tsunamiRef.current && tsunamiMatRef.current) {
         const tProgress = ((time + timeOffset) % 5.0) / 5.0; 
-        const tScale = 0.2 + (tProgress * 0.6); 
-        tsunamiRef.current.scale.set(tScale, tScale, 1);
-        tsunamiMatRef.current.opacity = (1.0 - tProgress) * 0.5; 
+        tsunamiRef.current.scale.set(0.2 + (tProgress * 0.6), 0.2 + (tProgress * 0.6), 1);
+        tsunamiMatRef.current.opacity = (1.0 - tProgress) * 0.6; 
     }
   });
 
   return (
     <group position={pos} onUpdate={self => self.lookAt(0,0,0)}>
-      {/* Invisible Hitbox */}
-      <mesh 
-        onPointerOver={(e) => { e.stopPropagation(); setHovered(true); }}
-        onPointerOut={() => setHovered(false)}
-        onClick={(e) => { e.stopPropagation(); setActiveQuake(isActive ? null : quake); }}
-      >
+      <mesh onPointerOver={(e) => { e.stopPropagation(); setHovered(true); }} onPointerOut={() => setHovered(false)} onClick={(e) => { e.stopPropagation(); setActiveQuake(isActive ? null : quake); }}>
         <sphereGeometry args={[baseScale * 0.6, 16, 16]} />
         <meshBasicMaterial visible={false} />
       </mesh>
 
-      {/* The Liquid Plane Shader */}
       <mesh ref={meshRef}>
         <planeGeometry args={[1, 1]} />
-        <shaderMaterial 
-          ref={materialRef}
-          vertexShader={rippleVertexShader}
-          fragmentShader={rippleFragmentShader}
-          uniforms={uniforms}
-          transparent={true} 
-          blending={THREE.AdditiveBlending} 
-          side={THREE.DoubleSide}
-          depthWrite={false} 
-        />
+        <shaderMaterial ref={materialRef} vertexShader={rippleVertexShader} fragmentShader={rippleFragmentShader} uniforms={uniforms} transparent={true} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>
 
-      {/* Tsunami Warning Ring */}
       {hasTsunami && (
         <mesh ref={tsunamiRef} position={[0,0,-0.001]}> 
           <ringGeometry args={[0.8, 1, 64]} />
-          <meshBasicMaterial ref={tsunamiMatRef} color="#00ffff" side={THREE.DoubleSide} transparent={true} blending={THREE.AdditiveBlending} depthWrite={false} />
+          <meshBasicMaterial ref={tsunamiMatRef} color="#ff00ff" side={THREE.DoubleSide} transparent={true} blending={THREE.AdditiveBlending} depthWrite={false} />
         </mesh>
       )}
 
-      {/* TETHER & HUD IN SPACE */}
       {isActive && (
         <>
-          <line geometry={tetherGeom}>
-            <lineBasicMaterial color={rippleColorStr} transparent={true} opacity={0.6} />
-          </line>
-
-          {/* Anchor the HTML directly to the end of the line (0, 0, -1.8) */}
+          <line geometry={tetherGeom}><lineBasicMaterial color={rippleColorStr} transparent={true} opacity={0.6} /></line>
+          
+          {/* HUD sits at the end of the line */}
           <Html position={[0, 0, -1.8]} center zIndexRange={[100, 0]}>
-            {/* Added a tiny custom inline animation so it fades in nicely */}
-            <div 
-              style={{ animation: 'fadeIn 0.4s ease-out forwards' }}
-              className="bg-slate-900 border-2 border-teal-500 p-4 rounded-lg text-white text-sm font-sans min-w-[280px] shadow-2xl pointer-events-none select-none opacity-0"
-            >
+            <div style={{ animation: 'fadeIn 0.3s ease-out forwards' }} className={`bg-slate-900 border-2 ${hasTsunami ? 'border-fuchsia-500 shadow-[0_0_20px_rgba(255,0,255,0.4)]' : 'border-teal-500 shadow-2xl'} p-4 rounded-lg text-white text-sm font-sans min-w-[280px] pointer-events-none select-none opacity-0`}>
               <style>{`@keyframes fadeIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }`}</style>
-              
               <div className="flex justify-between items-center mb-3 border-b border-slate-700 pb-2">
-                  <span className={`${hasTsunami ? 'text-cyan-400' : 'text-teal-400'} font-bold uppercase tracking-widest text-xs`}>
-                    {hasTsunami ? 'TSUNAMI WARNING' : 'EVENT LOG'}
-                  </span>
+                  <span className={`${hasTsunami ? 'text-fuchsia-500' : 'text-teal-400'} font-bold uppercase tracking-widest text-xs`}>{hasTsunami ? 'TSUNAMI WARNING' : 'EVENT LOG'}</span>
                   <span className="text-slate-300 font-mono text-xs">{formatUTCTime(quake.time)}</span>
               </div>
-              
               <div className="space-y-3">
-                <p className="whitespace-normal font-medium leading-relaxed">
-                  <span className="text-slate-400 font-mono text-xs block mb-1">LOCATION</span> 
-                  {quake.place}
-                </p>
-                
+                <p className="whitespace-normal font-medium leading-relaxed"><span className="text-slate-400 font-mono text-xs block mb-1">LOCATION</span> {quake.place}</p>
                 <div className="grid grid-cols-2 gap-4 border-t border-slate-700 pt-3">
-                    <div>
-                      <span className="text-slate-400 font-mono text-xs block">LATITUDE</span>
-                      <span className="font-mono">{latitude.toFixed(4)}°</span>
-                    </div>
-                    <div>
-                      <span className="text-slate-400 font-mono text-xs block">LONGITUDE</span>
-                      <span className="font-mono">{longitude.toFixed(4)}°</span>
-                    </div>
+                    <div><span className="text-slate-400 font-mono text-xs block">LATITUDE</span><span className="font-mono">{latitude.toFixed(4)}°</span></div>
+                    <div><span className="text-slate-400 font-mono text-xs block">LONGITUDE</span><span className="font-mono">{longitude.toFixed(4)}°</span></div>
                 </div>
-                
                 <div className="grid grid-cols-2 gap-4 bg-slate-800 p-2 rounded mt-2">
-                    <div>
-                      <span className="text-slate-400 font-mono text-xs block">MAGNITUDE</span>
-                      <span className={`text-lg font-bold ${mag > 5 ? 'text-red-500' : mag > 3 ? 'text-orange-400' : 'text-teal-400'}`}>
-                        {mag.toFixed(2)}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-slate-400 font-mono text-xs block">DEPTH</span>
-                      <span className="text-lg font-bold text-slate-200">{depth.toFixed(1)} <span className="text-sm font-normal">km</span></span>
-                    </div>
+                    <div><span className="text-slate-400 font-mono text-xs block">MAGNITUDE</span><span className={`text-lg font-bold ${mag > 5 ? 'text-red-500' : mag > 3 ? 'text-orange-400' : 'text-teal-400'}`}>{mag.toFixed(2)}</span></div>
+                    <div><span className="text-slate-400 font-mono text-xs block">DEPTH</span><span className="text-lg font-bold text-slate-200">{depth.toFixed(1)} <span className="text-sm font-normal">km</span></span></div>
                 </div>
               </div>
             </div>
@@ -320,43 +222,59 @@ export default function App() {
   const [lastJsonMessage, setLastJsonMessage] = useState(null);
   const [readyState, setReadyState] = useState(0);
   const [activeQuake, setActiveQuake] = useState(null); 
+  const wsRef = useRef(null); 
+  
+  // NEW: Added 'TSUNAMI' as a valid filter state
+  const [filterMode, setFilterMode] = useState('ALL');
 
   useEffect(() => {
-    let ws;
     let reconnectTimeout;
-
     const connect = () => {
       setReadyState(0); 
-      ws = new WebSocket(WS_URL);
-      ws.onopen = () => setReadyState(1); 
-      ws.onmessage = (event) => {
+      wsRef.current = new WebSocket(WS_URL);
+      wsRef.current.onopen = () => setReadyState(1); 
+      wsRef.current.onmessage = (event) => {
         try {
+          setActiveQuake(null);
           setLastJsonMessage(JSON.parse(event.data));
         } catch (e) {
           console.error('WebSocket payload parsing failed', e);
         }
       };
-      ws.onclose = () => {
+      wsRef.current.onclose = () => {
         setReadyState(3); 
         reconnectTimeout = setTimeout(connect, 3000);
       };
-      ws.onerror = () => ws.close();
+      wsRef.current.onerror = () => wsRef.current.close();
     };
 
     connect();
-    return () => { clearTimeout(reconnectTimeout); if (ws) { ws.onclose = null; ws.close(); } };
+    return () => { clearTimeout(reconnectTimeout); if (wsRef.current) { wsRef.current.onclose = null; wsRef.current.close(); } };
   }, []);
 
+  const changeTimeframe = (frame) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ command: 'change_timeframe', value: frame }));
+      setFilterMode('ALL'); // Reset filter when switching timeframes
+    }
+  };
+
   const earthquakeData = lastJsonMessage?.events || [];
-  const totalQuakes = lastJsonMessage?.count || 0;
+  const currentTimeframe = lastJsonMessage?.timeframe || 'hour'; 
+
+  // Apply the upgraded Noise/Tsunami Filter
+  const visibleQuakes = useMemo(() => {
+    if (filterMode === 'TSUNAMI') return earthquakeData.filter(q => q.tsunami === 1);
+    if (filterMode === '5.0') return earthquakeData.filter(q => q.magnitude >= 5.0);
+    if (filterMode === '3.0') return earthquakeData.filter(q => q.magnitude >= 3.0);
+    return earthquakeData; // 'ALL'
+  }, [earthquakeData, filterMode]);
 
   const topQuakes = useMemo(() => {
-    return [...earthquakeData].sort((a, b) => b.magnitude - a.magnitude).slice(0, 10);
-  }, [earthquakeData]);
+    return [...visibleQuakes].sort((a, b) => b.magnitude - a.magnitude).slice(0, 10);
+  }, [visibleQuakes]);
 
-  const connectionStatus = {
-    0: 'CONNECTING...', 1: 'LIVE DATA STREAM OPEN', 2: 'DISCONNECTING...', 3: 'OFFLINE - RETRYING...',
-  }[readyState];
+  const connectionStatus = { 0: 'CONNECTING...', 1: 'LIVE DATA STREAM OPEN', 2: 'DISCONNECTING...', 3: 'OFFLINE - RETRYING...' }[readyState];
 
   return (
     <div className="w-screen h-screen bg-black overflow-hidden relative font-sans text-white m-0 p-0 flex">
@@ -365,31 +283,50 @@ export default function App() {
       <div className="absolute inset-y-0 left-0 pointer-events-none z-10 p-8 flex flex-col justify-between">
         <div>
           <h1 className="text-5xl font-black text-teal-400 tracking-tight drop-shadow-md mb-4">SEISMIC</h1>
-          <div className="bg-slate-900/80 border border-slate-700 p-4 rounded-lg backdrop-blur-md space-y-2 inline-block">
+          <div className="bg-slate-900/80 border border-slate-700 p-4 rounded-lg backdrop-blur-md space-y-2 inline-block shadow-lg">
             <p className="text-sm text-slate-300 font-mono">STATUS: <span className={readyState === 1 ? 'text-teal-400 font-bold' : 'text-red-500 font-bold'}>[{connectionStatus}]</span></p>
-            <p className="text-sm text-slate-300 font-mono">ANOMALIES: <span className="text-white font-bold">{totalQuakes}</span></p>
+            <p className="text-sm text-slate-300 font-mono">TOTAL IN CACHE: <span className="text-white font-bold">{earthquakeData.length}</span></p>
+            <p className="text-sm text-slate-300 font-mono">VISIBLE: <span className="text-teal-400 font-bold">{visibleQuakes.length}</span></p>
             <p className="text-sm text-slate-300 font-mono">LAST SYNC: <span className="text-white font-bold">{formatUTCTime(lastJsonMessage?.timestamp)}</span></p>
           </div>
         </div>
 
-        <div className="bg-slate-900/80 border border-slate-700 p-4 rounded-lg backdrop-blur-md inline-block pointer-events-auto">
-          <h3 className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-3 border-b border-slate-700 pb-2">Threat Legend</h3>
-          <div className="text-sm text-slate-200 space-y-3 font-medium">
-            <div className="flex items-center">
-              <div className="w-4 h-4 bg-teal-400 mr-3 rounded-full shadow-[0_0_12px_#2dd4bf]"></div>
-              <span>Minor (&lt; 3.0)</span>
+        <div className="space-y-4 pointer-events-auto inline-block w-max">
+          
+          <div className="bg-slate-900/80 border border-slate-700 p-2 rounded-lg backdrop-blur-md flex space-x-2 shadow-lg">
+            {['hour', 'day', 'week'].map((frame) => (
+              <button
+                key={frame}
+                onClick={() => changeTimeframe(frame)}
+                className={`px-4 py-2 rounded text-xs font-bold uppercase tracking-wider transition-colors ${
+                  currentTimeframe === frame 
+                    ? 'bg-teal-500 text-black shadow-[0_0_15px_rgba(0,255,170,0.4)]' 
+                    : 'bg-slate-800 text-slate-400 hover:bg-slate-700 hover:text-white'
+                }`}
+              >
+                {frame === 'hour' ? '1 Hour' : frame === 'day' ? '24 Hours' : '7 Days'}
+              </button>
+            ))}
+          </div>
+
+          <div className="bg-slate-900/80 border border-slate-700 p-4 rounded-lg backdrop-blur-md shadow-lg">
+            <h3 className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-3 border-b border-slate-700 pb-2">Threat Legend</h3>
+            <div className="text-sm text-slate-200 space-y-3 font-medium">
+              <div className="flex items-center"><div className="w-4 h-4 bg-teal-400 mr-3 rounded-full shadow-[0_0_12px_#2dd4bf]"></div><span>Minor (&lt; 3.0)</span></div>
+              <div className="flex items-center"><div className="w-4 h-4 bg-orange-400 mr-3 rounded-full shadow-[0_0_12px_#fb923c]"></div><span>Moderate (3.0 - 5.0)</span></div>
+              <div className="flex items-center"><div className="w-4 h-4 bg-red-600 mr-3 rounded-full shadow-[0_0_12px_#dc2626]"></div><span>Severe (&gt; 5.0)</span></div>
+              <div className="flex items-center pt-2"><div className="w-3 h-3 border-2 border-fuchsia-500 mr-3 rounded-full shadow-[0_0_10px_#ff00ff]"></div><span className="text-fuchsia-500 font-bold tracking-widest">TSUNAMI ALERT</span></div>
             </div>
-            <div className="flex items-center">
-              <div className="w-4 h-4 bg-orange-400 mr-3 rounded-full shadow-[0_0_12px_#fb923c]"></div>
-              <span>Moderate (3.0 - 5.0)</span>
-            </div>
-            <div className="flex items-center">
-              <div className="w-4 h-4 bg-red-600 mr-3 rounded-full shadow-[0_0_12px_#dc2626]"></div>
-              <span>Severe (&gt; 5.0)</span>
-            </div>
-            <div className="flex items-center pt-2">
-              <div className="w-3 h-3 border-2 border-cyan-400 mr-3 rounded-full shadow-[0_0_10px_#22d3ee]"></div>
-              <span className="text-cyan-400 font-bold tracking-widest">TSUNAMI ALERT</span>
+
+            {/* UPGRADED NOISE & TSUNAMI FILTER */}
+            <div className="mt-4 pt-3 border-t border-slate-700">
+               <h3 className="text-slate-500 text-[10px] font-bold uppercase tracking-widest mb-2">Noise Filter (Magnitude)</h3>
+               <div className="flex space-x-1">
+                 <button onClick={() => setFilterMode('ALL')} className={`flex-1 py-1.5 px-2 text-xs rounded border transition-colors ${filterMode === 'ALL' ? 'bg-slate-700 border-slate-400 text-white shadow-inner' : 'bg-transparent border-slate-700 text-slate-500 hover:text-slate-300'}`}>All</button>
+                 <button onClick={() => setFilterMode('3.0')} className={`flex-1 py-1.5 px-2 text-xs rounded border transition-colors ${filterMode === '3.0' ? 'bg-slate-700 border-slate-400 text-white shadow-inner' : 'bg-transparent border-slate-700 text-slate-500 hover:text-slate-300'}`}>3.0+</button>
+                 <button onClick={() => setFilterMode('5.0')} className={`flex-1 py-1.5 px-2 text-xs rounded border transition-colors ${filterMode === '5.0' ? 'bg-slate-700 border-slate-400 text-white shadow-inner' : 'bg-transparent border-slate-700 text-slate-500 hover:text-slate-300'}`}>5.0+</button>
+                 <button onClick={() => setFilterMode('TSUNAMI')} className={`flex-1 py-1.5 px-2 text-xs font-bold rounded border transition-colors ${filterMode === 'TSUNAMI' ? 'bg-fuchsia-600/30 border-fuchsia-500 text-fuchsia-300 shadow-[0_0_10px_rgba(255,0,255,0.2)]' : 'bg-transparent border-slate-700 text-fuchsia-500/50 hover:text-fuchsia-400 hover:border-fuchsia-500/50'}`}>TSUNAMI</button>
+               </div>
             </div>
           </div>
         </div>
@@ -399,10 +336,13 @@ export default function App() {
       <div className="absolute inset-y-0 right-0 w-96 bg-slate-900 border-l border-slate-700 shadow-2xl z-10 flex flex-col pointer-events-auto">
         <div className="p-6 border-b border-slate-700 bg-slate-800">
           <h2 className="text-white font-black tracking-wide text-xl uppercase">Priority Targets</h2>
-          <p className="text-xs text-slate-400 mt-1 font-mono">Global Top 10 by Magnitude</p>
+          <p className="text-xs text-slate-400 mt-1 font-mono">Global Top 10 ({currentTimeframe === 'hour' ? '1H' : currentTimeframe === 'day' ? '24H' : '7D'})</p>
         </div>
         
         <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-3 custom-scrollbar">
+          {topQuakes.length === 0 && (
+            <div className="text-slate-500 text-sm font-mono text-center pt-10">NO THREATS FOUND IN FILTER</div>
+          )}
           {topQuakes.map((quake) => (
             <div 
               key={quake.id} 
@@ -417,7 +357,7 @@ export default function App() {
               </div>
               <p className="text-sm text-slate-200 font-medium whitespace-normal leading-snug">{quake.place}</p>
               {quake.tsunami === 1 && (
-                <div className="mt-2 text-[9px] text-black bg-cyan-400 px-1 py-0.5 inline-block font-bold rounded uppercase tracking-wider">
+                <div className="mt-2 text-[9px] text-white bg-fuchsia-600 px-1.5 py-0.5 inline-block font-bold rounded uppercase tracking-wider">
                   Tsunami Risk
                 </div>
               )}
@@ -427,11 +367,11 @@ export default function App() {
       </div>
 
       {/* --- 3D CANVAS --- */}
-      <Canvas 
-        camera={{ position: [0, 0, 6], fov: 60 }} 
-        className="block w-full h-full absolute inset-0"
-        onPointerMissed={() => setActiveQuake(null)} 
-      >
+      <Canvas camera={{ position: [0, 0, 6], fov: 60 }} className="block w-full h-full absolute inset-0 z-0" onPointerMissed={() => setActiveQuake(null)}>
+        
+        {/* THIS IS THE MAGIC FIX: Shifts the 3D world away from the UI */}
+        <ViewportAdjuster />
+
         <ambientLight intensity={1.5} />
         <directionalLight position={[5, 3, 5]} intensity={3.5} castShadow />
         <hemisphereLight skyColor="#ffffff" groundColor="#001144" intensity={1.0} />
@@ -444,7 +384,7 @@ export default function App() {
             <Globe />
           </React.Suspense>
           <TectonicPlates />
-          {earthquakeData.map((quake) => (
+          {visibleQuakes.map((quake) => (
             <QuakeRipple key={quake.id} quake={quake} activeQuake={activeQuake} setActiveQuake={setActiveQuake} />
           ))}
         </group>
