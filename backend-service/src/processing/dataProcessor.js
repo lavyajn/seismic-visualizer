@@ -14,7 +14,8 @@ function pruneSeismicData(rawGeoJson) {
             id: id,
             magnitude: properties.mag,
             place: properties.place,
-            time: properties.time, // Unix timestamp in ms
+            time: properties.time,
+            tsunami: properties.tsunami,
             coordinates: {
                 longitude: geometry.coordinates[0],
                 latitude: geometry.coordinates[1],
