@@ -32,7 +32,7 @@ const rippleFragmentShader = `
   }
 `;
 
-// --- UTILS ---
+// --- UTILS & MATH VAULT ---
 const latLongToVector3 = (lat, lng, radius, depthKm = 0) => {
   const phi = (90 - lat) * (Math.PI / 180);
   const theta = (lng + 180) * (Math.PI / 180);
@@ -123,7 +123,6 @@ const Globe = () => {
   );
 };
 
-// THE HOLLYWOOD TECTONIC LOGIC
 const TectonicPlates = ({ targetCoords }) => {
   const [plateLines, setPlateLines] = useState([]);
   
@@ -133,7 +132,6 @@ const TectonicPlates = ({ targetCoords }) => {
     }).catch(e => console.error(e));
   }, []);
 
-  // Convert the current target to a 3D vector so we can measure distance
   const targetVec = useMemo(() => {
     if (!targetCoords) return null;
     return latLongToVector3(targetCoords.lat, targetCoords.lng, GLOBE_RADIUS);
@@ -142,16 +140,12 @@ const TectonicPlates = ({ targetCoords }) => {
   return (
     <group>
       {plateLines.map((points, i) => {
-        // We calculate if this specific fault line is near the camera's target
         let isHighlighted = false;
         if (targetVec && points.length > 0) {
-          // If the start of the line is within 1.0 units (about 3000km) of the target, light it up
           isHighlighted = points[0].distanceTo(targetVec) < 1.0;
         }
-
-        // Highlighted lines turn bright white/cyan and pop out. Normal lines stay dim orange.
         const lineColor = isHighlighted ? '#00ffff' : '#ff6600';
-        const lineOpacity = isHighlighted ? 1.0 : (targetVec ? 0.15 : 0.6); // Dim the background lines if a target is active
+        const lineOpacity = isHighlighted ? 1.0 : (targetVec ? 0.15 : 0.6); 
 
         return (
           <line key={i} geometry={new THREE.BufferGeometry().setFromPoints(points)}>
@@ -163,19 +157,16 @@ const TectonicPlates = ({ targetCoords }) => {
   );
 };
 
-// NEW: A tactical target lock reticle for the regions
 const RegionalReticle = ({ targetCoords }) => {
   const meshRef = useRef();
   
   const pos = useMemo(() => {
     if (!targetCoords) return null;
-    // We add a tiny offset (0.01) so it sits just above the fault lines
     return latLongToVector3(targetCoords.lat, targetCoords.lng, GLOBE_RADIUS + 0.01);
   }, [targetCoords]);
 
   useFrame((state) => {
     if (!meshRef.current) return;
-    // Makes the reticle pulse by scaling it up and down using a sine wave
     const scale = 1.0 + Math.sin(state.clock.elapsedTime * 4) * 0.2;
     meshRef.current.scale.set(scale, scale, 1);
   });
@@ -188,7 +179,6 @@ const RegionalReticle = ({ targetCoords }) => {
         <ringGeometry args={[0.2, 0.22, 32]} />
         <meshBasicMaterial color="#00ffff" side={THREE.DoubleSide} transparent opacity={0.8} blending={THREE.AdditiveBlending} depthWrite={false} />
       </mesh>
-      {/* A crosshair dot in the middle */}
       <mesh>
         <circleGeometry args={[0.02, 16]} />
         <meshBasicMaterial color="#00ffff" transparent opacity={0.8} blending={THREE.AdditiveBlending} depthWrite={false}/>
@@ -196,6 +186,32 @@ const RegionalReticle = ({ targetCoords }) => {
     </group>
   );
 }
+
+// --- THE SHOCKWAVE COMPONENT ---
+const ShockwaveDome = ({ impactRadiusKm, colorStr }) => {
+  const domeRef = useRef();
+  
+  // Convert real-world kilometers to our 3D space radius (Earth radius is ~6371km)
+  const scale3D = useMemo(() => (impactRadiusKm / 6371) * GLOBE_RADIUS, [impactRadiusKm]);
+
+  useFrame((state) => {
+    if(!domeRef.current) return;
+    // Make the dome pulse slightly to look like a live forcefield
+    const pulse = 1.0 + Math.sin(state.clock.elapsedTime * 5) * 0.05;
+    
+    // Scale X and Y by the radius, but flatten the Z axis (0.4) so it looks like a dome/blister sitting ON the crust
+    domeRef.current.scale.lerp(new THREE.Vector3(scale3D * pulse, scale3D * pulse, scale3D * 0.4 * pulse), 0.1);
+  });
+
+  return (
+    <mesh ref={domeRef} position={[0,0,0.005]}>
+       <sphereGeometry args={[1, 32, 32]} />
+       <meshBasicMaterial color={colorStr} transparent opacity={0.15} blending={THREE.AdditiveBlending} depthWrite={false} />
+       {/* Adds a harsh wireframe skeleton to the dome so it looks tactical */}
+       <meshBasicMaterial color={colorStr} wireframe transparent opacity={0.3} blending={THREE.AdditiveBlending} depthWrite={false} />
+    </mesh>
+  )
+};
 
 const QuakeRipple = ({ quake, activeQuake, triggerQuakeSelect, userLocation }) => {
   const meshRef = useRef();
@@ -215,6 +231,16 @@ const QuakeRipple = ({ quake, activeQuake, triggerQuakeSelect, userLocation }) =
   const rippleColorStr = useMemo(() => mag > 5 ? '#ff0000' : mag > 3 ? '#ffaa00' : '#3b82f6', [mag]);
   const uniforms = useMemo(() => ({ uColor: { value: new THREE.Color(rippleColorStr) }, time: { value: 0 } }), [rippleColorStr]);
   const timeOffset = useMemo(() => Math.random() * 5, []);
+
+  // --- CALCULATE PHYSICAL DESTRUCTION RADIUS ---
+  const impactRadiusKm = useMemo(() => {
+    // Exponential growth based on magnitude (e.g., Mag 7 is vastly more energetic than Mag 5)
+    const baseEnergy = Math.exp(mag) / 4; 
+    // The deeper it is, the less surface area it wrecks. Max penalty at 300km deep.
+    const depthPenalty = Math.max(0.05, 1 - (depth / 300));
+    // Calculate final radius and cap it at 3000km so a massive quake doesn't clip the camera
+    return Math.round(Math.min(baseEnergy * depthPenalty, 3000));
+  }, [mag, depth]);
 
   const getDynamicColorClass = (magnitude, isTsunami, type) => {
     if (isTsunami) return type === 'border' ? 'border-fuchsia-500 shadow-[0_0_20px_rgba(255,0,255,0.4)]' : 'text-fuchsia-500';
@@ -258,6 +284,9 @@ const QuakeRipple = ({ quake, activeQuake, triggerQuakeSelect, userLocation }) =
         <shaderMaterial ref={materialRef} vertexShader={rippleVertexShader} fragmentShader={rippleFragmentShader} uniforms={uniforms} transparent={true} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>
 
+      {/* Render the Shockwave Dome ONLY when active so it doesn't clutter the map */}
+      {isActive && <ShockwaveDome impactRadiusKm={impactRadiusKm} colorStr={rippleColorStr} />}
+
       {hasTsunami && (
         <mesh ref={tsunamiRef} position={[0,0,-0.001]}> 
           <ringGeometry args={[0.8, 1, 64]} />
@@ -291,12 +320,19 @@ const QuakeRipple = ({ quake, activeQuake, triggerQuakeSelect, userLocation }) =
                     <div><span className="text-slate-400 font-mono text-xs block">DEPTH</span><span className="text-lg font-bold text-slate-200">{depth.toFixed(1)} <span className="text-sm font-normal">km</span></span></div>
                 </div>
 
-                {distanceToUser && (
-                  <div className="mt-2 bg-slate-800/50 border border-slate-700 p-2 rounded text-center">
-                    <span className="text-slate-400 font-mono text-[10px] block uppercase tracking-widest">Distance To You</span>
-                    <span className="text-white font-bold font-mono tracking-widest">{distanceToUser.toLocaleString()} km</span>
+                <div className="grid grid-cols-2 gap-2 mt-2">
+                  {/* NEW IMPACT ZONE METRIC */}
+                  <div className="bg-slate-800/50 border border-slate-700 p-2 rounded text-center">
+                    <span className="text-slate-400 font-mono text-[9px] block uppercase tracking-widest">Impact Zone</span>
+                    <span className="text-white font-bold font-mono tracking-widest text-xs">{impactRadiusKm.toLocaleString()} km</span>
                   </div>
-                )}
+                  {distanceToUser && (
+                    <div className="bg-slate-800/50 border border-slate-700 p-2 rounded text-center">
+                      <span className="text-slate-400 font-mono text-[9px] block uppercase tracking-widest">Distance To You</span>
+                      <span className="text-white font-bold font-mono tracking-widest text-xs">{distanceToUser.toLocaleString()} km</span>
+                    </div>
+                  )}
+                </div>
 
               </div>
             </div>
@@ -312,10 +348,7 @@ export default function App() {
   const [readyState, setReadyState] = useState(0);
   const [activeQuake, setActiveQuake] = useState(null); 
   const [cameraTarget, setCameraTarget] = useState(null); 
-  
-  // NEW: State to track if we are in "Region Hover" mode to render the reticle
   const [activeRegion, setActiveRegion] = useState(null);
-
   const [userLocation, setUserLocation] = useState(null);
   
   const wsRef = useRef(null); 
@@ -325,7 +358,7 @@ export default function App() {
     if ("geolocation" in navigator) {
       navigator.geolocation.getCurrentPosition(
         (pos) => setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-        (err) => console.warn("User denied GPS access. Proximity sensor disabled.")
+        (err) => console.warn("User denied GPS access.")
       );
     }
   }, []);
@@ -364,7 +397,7 @@ export default function App() {
 
   const triggerQuakeSelect = (quake) => {
     setActiveQuake(quake);
-    setActiveRegion(null); // Clear the regional reticle if a specific quake is clicked
+    setActiveRegion(null); 
     if (quake) {
       setCameraTarget({ lat: quake.coordinates.latitude, lng: quake.coordinates.longitude });
     }
@@ -372,7 +405,7 @@ export default function App() {
 
   const triggerRegionalJump = (region) => {
     setActiveQuake(null); 
-    setActiveRegion(region); // Set the region to trigger the reticle and plate highlights
+    setActiveRegion(region); 
     setCameraTarget({ lat: region.lat, lng: region.lng }); 
   };
 
@@ -409,7 +442,6 @@ export default function App() {
         </div>
 
         <div className="space-y-4 pointer-events-auto inline-block w-max">
-          
           <div className="bg-slate-900/80 border border-slate-700 p-2 rounded-lg backdrop-blur-md flex space-x-2 shadow-lg">
             {['hour', 'day', 'week'].map((frame) => (
               <button
@@ -527,10 +559,7 @@ export default function App() {
             <Globe />
           </React.Suspense>
           
-          {/* We pass the activeRegion down so the plates know what to highlight */}
           <TectonicPlates targetCoords={activeRegion} />
-          
-          {/* The glowing target lock reticle */}
           {activeRegion && <RegionalReticle targetCoords={activeRegion} />}
 
           {visibleQuakes.map((quake) => (
