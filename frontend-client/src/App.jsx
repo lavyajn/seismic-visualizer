@@ -8,7 +8,9 @@ const WS_URL = 'ws://localhost:8080';
 const GLOBE_RADIUS = 2; 
 
 const TEXTURES = {
-  color: 'https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg',
+  satellite: 'https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg',
+  topography: 'https://unpkg.com/three-globe/example/img/earth-day.jpg',
+  dark: 'https://unpkg.com/three-globe/example/img/earth-dark.jpg',
   normal: 'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_normal_2048.jpg',
   water: 'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_specular_2048.jpg',
   clouds: 'https://raw.githubusercontent.com/mrdoob/three.js/master/examples/textures/planets/earth_clouds_1024.png'
@@ -101,29 +103,74 @@ const CameraRig = ({ targetCoords }) => {
   return null;
 };
 
-const Globe = () => {
-  const [colorMap, normalMap, waterMap, cloudMap] = useLoader(THREE.TextureLoader, [TEXTURES.color, TEXTURES.normal, TEXTURES.water, TEXTURES.clouds]);
+const Globe = ({ mapType }) => {
+  const [satMap, topoMap, darkMap, normalMap, waterMap, cloudMap] = useLoader(THREE.TextureLoader, [
+    TEXTURES.satellite, TEXTURES.topography, TEXTURES.dark, TEXTURES.normal, TEXTURES.water, TEXTURES.clouds
+  ]);
   const cloudsRef = useRef();
+
   useFrame(() => { if (cloudsRef.current) cloudsRef.current.rotation.y += 0.00005; });
+
+  const activeMap = mapType === 'topography' ? topoMap : mapType === 'dark' ? darkMap : satMap;
+  const isLightMap = mapType === 'topography' || mapType === 'terrain';
+
+  // The custom GLSL shader that paints the "clay" geometry into a green/blue map on the fly
+  const terrainShader = useMemo(() => {
+    return (shader) => {
+      shader.fragmentShader = shader.fragmentShader.replace(
+        `#include <map_fragment>`,
+        `
+        #ifdef USE_MAP
+          // We passed 'waterMap' as the base map, so the red channel tells us what is water (1.0) and what is land (0.0)
+          float isWater = texture2D( map, vUv ).r;
+          
+          // The custom colors from your screenshot
+          vec3 land = vec3(0.82, 0.92, 0.82);   // Pale mint green
+          vec3 water = vec3(0.65, 0.85, 1.00);  // Bright sky blue
+          
+          vec4 texelColor = vec4(mix(land, water, isWater), 1.0);
+          diffuseColor *= texelColor;
+        #endif
+        `
+      );
+    };
+  }, []);
+
   return (
     <group>
       <mesh receiveShadow castShadow>
         <sphereGeometry args={[GLOBE_RADIUS, 64, 64]} />
-        <meshPhongMaterial map={colorMap} normalMap={normalMap} specularMap={waterMap} specular={new THREE.Color('#333333')} shininess={15} />
+        {mapType === 'terrain' ? (
+          // We feed 'waterMap' into the map prop purely so the shader above can read it to paint the colors
+          <meshStandardMaterial 
+            map={waterMap} 
+            normalMap={normalMap} 
+            roughness={0.7} 
+            onBeforeCompile={terrainShader}
+          />
+        ) : (
+          <meshPhongMaterial map={activeMap} normalMap={normalMap} specularMap={waterMap} specular={new THREE.Color('#222222')} shininess={15} />
+        )}
       </mesh>
-      <mesh ref={cloudsRef} castShadow receiveShadow>
-        <sphereGeometry args={[GLOBE_RADIUS + 0.006, 64, 64]} />
-        <meshStandardMaterial map={cloudMap} transparent={true} opacity={0.6} depthWrite={false} />
-      </mesh>
-      <mesh>
-        <sphereGeometry args={[GLOBE_RADIUS * 1.15, 64, 64]} />
-        <shaderMaterial vertexShader={atmosphereVertexShader} fragmentShader={atmosphereFragmentShader} blending={THREE.AdditiveBlending} side={THREE.BackSide} transparent={true} depthWrite={false} />
-      </mesh>
+      
+      {mapType === 'satellite' && (
+        <mesh ref={cloudsRef} castShadow receiveShadow>
+          <sphereGeometry args={[GLOBE_RADIUS + 0.006, 64, 64]} />
+          <meshStandardMaterial map={cloudMap} transparent={true} opacity={0.6} depthWrite={false} />
+        </mesh>
+      )}
+
+      {!isLightMap && (
+        <mesh>
+          <sphereGeometry args={[GLOBE_RADIUS * 1.15, 64, 64]} />
+          <shaderMaterial vertexShader={atmosphereVertexShader} fragmentShader={atmosphereFragmentShader} blending={THREE.AdditiveBlending} side={THREE.BackSide} transparent={true} depthWrite={false} />
+        </mesh>
+      )}
     </group>
   );
 };
 
-const TectonicPlates = ({ targetCoords }) => {
+const TectonicPlates = ({ targetCoords, mapType }) => {
   const [plateLines, setPlateLines] = useState([]);
   
   useEffect(() => {
@@ -137,6 +184,8 @@ const TectonicPlates = ({ targetCoords }) => {
     return latLongToVector3(targetCoords.lat, targetCoords.lng, GLOBE_RADIUS);
   }, [targetCoords]);
 
+  const isLightMap = mapType === 'topography' || mapType === 'terrain';
+
   return (
     <group>
       {plateLines.map((points, i) => {
@@ -144,12 +193,21 @@ const TectonicPlates = ({ targetCoords }) => {
         if (targetVec && points.length > 0) {
           isHighlighted = points[0].distanceTo(targetVec) < 1.0;
         }
-        const lineColor = isHighlighted ? '#00ffff' : '#ff6600';
-        const lineOpacity = isHighlighted ? 1.0 : (targetVec ? 0.15 : 0.6); 
+        
+        const lineColor = isHighlighted 
+            ? (isLightMap ? '#0284c7' : '#00ffff') 
+            : (isLightMap ? '#b45309' : '#ff6600'); 
+            
+        const lineOpacity = isHighlighted ? 1.0 : (targetVec ? 0.15 : (isLightMap ? 0.9 : 0.6)); 
 
         return (
           <line key={i} geometry={new THREE.BufferGeometry().setFromPoints(points)}>
-            <lineBasicMaterial color={lineColor} transparent={true} opacity={lineOpacity} blending={THREE.AdditiveBlending} />
+            <lineBasicMaterial 
+              color={lineColor} 
+              transparent={true} 
+              opacity={lineOpacity} 
+              blending={isLightMap ? THREE.NormalBlending : THREE.AdditiveBlending} 
+            />
           </line>
         )
       })}
@@ -157,8 +215,9 @@ const TectonicPlates = ({ targetCoords }) => {
   );
 };
 
-const RegionalReticle = ({ targetCoords }) => {
+const RegionalReticle = ({ targetCoords, mapType }) => {
   const meshRef = useRef();
+  const isLightMap = mapType === 'topography' || mapType === 'terrain';
   
   const pos = useMemo(() => {
     if (!targetCoords) return null;
@@ -173,47 +232,45 @@ const RegionalReticle = ({ targetCoords }) => {
 
   if (!pos) return null;
 
+  const reticleColor = isLightMap ? '#0284c7' : '#00ffff';
+  const blendMode = isLightMap ? THREE.NormalBlending : THREE.AdditiveBlending;
+
   return (
     <group position={pos} onUpdate={self => self.lookAt(0,0,0)}>
       <mesh ref={meshRef}>
         <ringGeometry args={[0.2, 0.22, 32]} />
-        <meshBasicMaterial color="#00ffff" side={THREE.DoubleSide} transparent opacity={0.8} blending={THREE.AdditiveBlending} depthWrite={false} />
+        <meshBasicMaterial color={reticleColor} side={THREE.DoubleSide} transparent opacity={0.8} blending={blendMode} depthWrite={false} />
       </mesh>
       <mesh>
         <circleGeometry args={[0.02, 16]} />
-        <meshBasicMaterial color="#00ffff" transparent opacity={0.8} blending={THREE.AdditiveBlending} depthWrite={false}/>
+        <meshBasicMaterial color={reticleColor} transparent opacity={0.8} blending={blendMode} depthWrite={false}/>
       </mesh>
     </group>
   );
 }
 
-// --- THE SHOCKWAVE COMPONENT ---
-const ShockwaveDome = ({ impactRadiusKm, colorStr }) => {
+const ShockwaveDome = ({ impactRadiusKm, colorStr, mapType }) => {
   const domeRef = useRef();
-  
-  // Convert real-world kilometers to our 3D space radius (Earth radius is ~6371km)
   const scale3D = useMemo(() => (impactRadiusKm / 6371) * GLOBE_RADIUS, [impactRadiusKm]);
+  const isLightMap = mapType === 'topography' || mapType === 'terrain';
+  const blendMode = isLightMap ? THREE.NormalBlending : THREE.AdditiveBlending;
 
   useFrame((state) => {
     if(!domeRef.current) return;
-    // Make the dome pulse slightly to look like a live forcefield
     const pulse = 1.0 + Math.sin(state.clock.elapsedTime * 5) * 0.05;
-    
-    // Scale X and Y by the radius, but flatten the Z axis (0.4) so it looks like a dome/blister sitting ON the crust
     domeRef.current.scale.lerp(new THREE.Vector3(scale3D * pulse, scale3D * pulse, scale3D * 0.4 * pulse), 0.1);
   });
 
   return (
     <mesh ref={domeRef} position={[0,0,0.005]}>
        <sphereGeometry args={[1, 32, 32]} />
-       <meshBasicMaterial color={colorStr} transparent opacity={0.15} blending={THREE.AdditiveBlending} depthWrite={false} />
-       {/* Adds a harsh wireframe skeleton to the dome so it looks tactical */}
-       <meshBasicMaterial color={colorStr} wireframe transparent opacity={0.3} blending={THREE.AdditiveBlending} depthWrite={false} />
+       <meshBasicMaterial color={colorStr} transparent opacity={isLightMap ? 0.3 : 0.15} blending={blendMode} depthWrite={false} />
+       <meshBasicMaterial color={colorStr} wireframe transparent opacity={isLightMap ? 0.6 : 0.3} blending={blendMode} depthWrite={false} />
     </mesh>
   )
 };
 
-const QuakeRipple = ({ quake, activeQuake, triggerQuakeSelect, userLocation }) => {
+const QuakeRipple = ({ quake, activeQuake, triggerQuakeSelect, userLocation, mapType }) => {
   const meshRef = useRef();
   const materialRef = useRef();
   const tsunamiRef = useRef();
@@ -224,21 +281,22 @@ const QuakeRipple = ({ quake, activeQuake, triggerQuakeSelect, userLocation }) =
   const mag = quake.magnitude;
   const isActive = activeQuake?.id === quake.id;
   const hasTsunami = quake.tsunami === 1; 
+  const isLightMap = mapType === 'topography' || mapType === 'terrain';
   
   const pos = useMemo(() => latLongToVector3(latitude, longitude, GLOBE_RADIUS + 0.008), [latitude, longitude]);
   const baseScale = useMemo(() => Math.max(0.08, mag * 0.04), [mag]);
   
-  const rippleColorStr = useMemo(() => mag > 5 ? '#ff0000' : mag > 3 ? '#ffaa00' : '#3b82f6', [mag]);
+  const rippleColorStr = useMemo(() => {
+    if (isLightMap) return mag > 5 ? '#dc2626' : mag > 3 ? '#ea580c' : '#2563eb';
+    return mag > 5 ? '#ff0000' : mag > 3 ? '#ffaa00' : '#3b82f6';
+  }, [mag, isLightMap]);
+
   const uniforms = useMemo(() => ({ uColor: { value: new THREE.Color(rippleColorStr) }, time: { value: 0 } }), [rippleColorStr]);
   const timeOffset = useMemo(() => Math.random() * 5, []);
 
-  // --- CALCULATE PHYSICAL DESTRUCTION RADIUS ---
   const impactRadiusKm = useMemo(() => {
-    // Exponential growth based on magnitude (e.g., Mag 7 is vastly more energetic than Mag 5)
     const baseEnergy = Math.exp(mag) / 4; 
-    // The deeper it is, the less surface area it wrecks. Max penalty at 300km deep.
     const depthPenalty = Math.max(0.05, 1 - (depth / 300));
-    // Calculate final radius and cap it at 3000km so a massive quake doesn't clip the camera
     return Math.round(Math.min(baseEnergy * depthPenalty, 3000));
   }, [mag, depth]);
 
@@ -250,6 +308,7 @@ const QuakeRipple = ({ quake, activeQuake, triggerQuakeSelect, userLocation }) =
   };
 
   const tetherGeom = useMemo(() => new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-1.8)]), []);
+  const blendMode = isLightMap ? THREE.NormalBlending : THREE.AdditiveBlending;
 
   useEffect(() => { document.body.style.cursor = hovered ? 'pointer' : 'auto'; }, [hovered]);
 
@@ -263,7 +322,7 @@ const QuakeRipple = ({ quake, activeQuake, triggerQuakeSelect, userLocation }) =
     if (hasTsunami && tsunamiRef.current && tsunamiMatRef.current) {
         const tProgress = ((time + timeOffset) % 5.0) / 5.0; 
         tsunamiRef.current.scale.set(0.2 + (tProgress * 0.6), 0.2 + (tProgress * 0.6), 1);
-        tsunamiMatRef.current.opacity = (1.0 - tProgress) * 0.6; 
+        tsunamiMatRef.current.opacity = (1.0 - tProgress) * (isLightMap ? 0.8 : 0.6); 
     }
   });
 
@@ -281,22 +340,21 @@ const QuakeRipple = ({ quake, activeQuake, triggerQuakeSelect, userLocation }) =
 
       <mesh ref={meshRef}>
         <planeGeometry args={[1, 1]} />
-        <shaderMaterial ref={materialRef} vertexShader={rippleVertexShader} fragmentShader={rippleFragmentShader} uniforms={uniforms} transparent={true} blending={THREE.AdditiveBlending} side={THREE.DoubleSide} depthWrite={false} />
+        <shaderMaterial ref={materialRef} vertexShader={rippleVertexShader} fragmentShader={rippleFragmentShader} uniforms={uniforms} transparent={true} blending={blendMode} side={THREE.DoubleSide} depthWrite={false} />
       </mesh>
 
-      {/* Render the Shockwave Dome ONLY when active so it doesn't clutter the map */}
-      {isActive && <ShockwaveDome impactRadiusKm={impactRadiusKm} colorStr={rippleColorStr} />}
+      {isActive && <ShockwaveDome impactRadiusKm={impactRadiusKm} colorStr={rippleColorStr} mapType={mapType} />}
 
       {hasTsunami && (
         <mesh ref={tsunamiRef} position={[0,0,-0.001]}> 
           <ringGeometry args={[0.8, 1, 64]} />
-          <meshBasicMaterial ref={tsunamiMatRef} color="#ff00ff" side={THREE.DoubleSide} transparent={true} blending={THREE.AdditiveBlending} depthWrite={false} />
+          <meshBasicMaterial ref={tsunamiMatRef} color="#a21caf" side={THREE.DoubleSide} transparent={true} blending={blendMode} depthWrite={false} />
         </mesh>
       )}
 
       {isActive && (
         <>
-          <line geometry={tetherGeom}><lineBasicMaterial color={rippleColorStr} transparent={true} opacity={0.6} /></line>
+          <line geometry={tetherGeom}><lineBasicMaterial color={rippleColorStr} transparent={true} opacity={isLightMap ? 0.9 : 0.6} blending={blendMode} /></line>
           
           <Html position={[0, 0, -1.8]} center zIndexRange={[100, 0]}>
             <div style={{ animation: 'fadeIn 0.3s ease-out forwards' }} className={`bg-slate-900 border-2 ${getDynamicColorClass(mag, hasTsunami, 'border')} p-4 rounded-lg text-white text-sm font-sans min-w-[280px] pointer-events-none select-none opacity-0`}>
@@ -321,7 +379,6 @@ const QuakeRipple = ({ quake, activeQuake, triggerQuakeSelect, userLocation }) =
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 mt-2">
-                  {/* NEW IMPACT ZONE METRIC */}
                   <div className="bg-slate-800/50 border border-slate-700 p-2 rounded text-center">
                     <span className="text-slate-400 font-mono text-[9px] block uppercase tracking-widest">Impact Zone</span>
                     <span className="text-white font-bold font-mono tracking-widest text-xs">{impactRadiusKm.toLocaleString()} km</span>
@@ -351,8 +408,14 @@ export default function App() {
   const [activeRegion, setActiveRegion] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   
-  const wsRef = useRef(null); 
+  const [mapType, setMapType] = useState('satellite'); 
   const [filterMode, setFilterMode] = useState('ALL');
+  
+  const [sortMode, setSortMode] = useState('MAGNITUDE'); 
+  const [playbackTime, setPlaybackTime] = useState(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  const wsRef = useRef(null); 
 
   useEffect(() => {
     if ("geolocation" in navigator) {
@@ -372,7 +435,11 @@ export default function App() {
       wsRef.current.onmessage = (event) => {
         try {
           setActiveQuake(null);
-          setLastJsonMessage(JSON.parse(event.data));
+          const data = JSON.parse(event.data);
+          setLastJsonMessage(data);
+          if (data.events && data.events.length > 0 && !isPlaying) {
+             setPlaybackTime(Math.max(...data.events.map(q => q.time)));
+          }
         } catch (e) {
           console.error('WebSocket payload parsing failed', e);
         }
@@ -386,12 +453,13 @@ export default function App() {
 
     connect();
     return () => { clearTimeout(reconnectTimeout); if (wsRef.current) { wsRef.current.onclose = null; wsRef.current.close(); } };
-  }, []);
+  }, [isPlaying]);
 
   const changeTimeframe = (frame) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ command: 'change_timeframe', value: frame }));
       setFilterMode('ALL'); 
+      setIsPlaying(false);
     }
   };
 
@@ -412,18 +480,55 @@ export default function App() {
   const earthquakeData = lastJsonMessage?.events || [];
   const currentTimeframe = lastJsonMessage?.timeframe || 'hour'; 
 
+  useEffect(() => {
+    let interval;
+    if (isPlaying && earthquakeData.length > 0) {
+        const minTime = Math.min(...earthquakeData.map(q => q.time));
+        const maxTime = Math.max(...earthquakeData.map(q => q.time));
+        const step = (maxTime - minTime) / 300; 
+        
+        if (playbackTime >= maxTime) setPlaybackTime(minTime);
+
+        interval = setInterval(() => {
+            setPlaybackTime(prev => {
+                if (prev >= maxTime) { setIsPlaying(false); return maxTime; }
+                return prev + step;
+            });
+        }, 30);
+    }
+    return () => clearInterval(interval);
+  }, [isPlaying, earthquakeData]);
+
   const visibleQuakes = useMemo(() => {
-    if (filterMode === 'TSUNAMI') return earthquakeData.filter(q => q.tsunami === 1);
-    if (filterMode === '5.0') return earthquakeData.filter(q => q.magnitude >= 5.0);
-    if (filterMode === '3.0') return earthquakeData.filter(q => q.magnitude >= 3.0);
-    return earthquakeData; 
-  }, [earthquakeData, filterMode]);
+    let filtered = earthquakeData;
+    if (playbackTime) filtered = filtered.filter(q => q.time <= playbackTime);
+    if (filterMode === 'TSUNAMI') return filtered.filter(q => q.tsunami === 1);
+    if (filterMode === '5.0') return filtered.filter(q => q.magnitude >= 5.0);
+    if (filterMode === '3.0') return filtered.filter(q => q.magnitude >= 3.0);
+    return filtered; 
+  }, [earthquakeData, filterMode, playbackTime]);
 
   const topQuakes = useMemo(() => {
-    return [...visibleQuakes].sort((a, b) => b.magnitude - a.magnitude).slice(0, 10);
-  }, [visibleQuakes]);
+    let sorted = [...visibleQuakes];
+    if (sortMode === 'MAGNITUDE') {
+        sorted.sort((a, b) => b.magnitude - a.magnitude);
+    } else if (sortMode === 'RECENT') {
+        sorted.sort((a, b) => b.time - a.time);
+    } else if (sortMode === 'PROXIMITY' && userLocation) {
+        sorted.sort((a, b) => {
+            const distA = calculateHaversineDistance(userLocation.lat, userLocation.lng, a.coordinates.latitude, a.coordinates.longitude);
+            const distB = calculateHaversineDistance(userLocation.lat, userLocation.lng, b.coordinates.latitude, b.coordinates.longitude);
+            return distA - distB;
+        });
+    }
+    return sorted.slice(0, 10);
+  }, [visibleQuakes, sortMode, userLocation]);
 
   const connectionStatus = { 0: 'CONNECTING...', 1: 'LIVE DATA STREAM OPEN', 2: 'DISCONNECTING...', 3: 'OFFLINE - RETRYING...' }[readyState];
+  
+  const minTime = earthquakeData.length > 0 ? Math.min(...earthquakeData.map(q => q.time)) : 0;
+  const maxTime = earthquakeData.length > 0 ? Math.max(...earthquakeData.map(q => q.time)) : 100;
+  const scrubberProgress = playbackTime ? ((playbackTime - minTime) / (maxTime - minTime)) * 100 : 100;
 
   return (
     <div className="w-screen h-screen bg-black overflow-hidden relative font-sans text-white m-0 p-0 flex">
@@ -442,6 +547,7 @@ export default function App() {
         </div>
 
         <div className="space-y-4 pointer-events-auto inline-block w-max">
+          
           <div className="bg-slate-900/80 border border-slate-700 p-2 rounded-lg backdrop-blur-md flex space-x-2 shadow-lg">
             {['hour', 'day', 'week'].map((frame) => (
               <button
@@ -496,15 +602,58 @@ export default function App() {
                </div>
             </div>
 
+            <div className="mt-4 pt-3 border-t border-slate-700">
+               <h3 className="text-slate-500 text-[10px] font-bold uppercase tracking-widest mb-2">Map Interface</h3>
+               <div className="grid grid-cols-2 gap-1">
+                 <button onClick={() => setMapType('satellite')} className={`py-1.5 px-2 text-[10px] uppercase tracking-widest font-bold rounded border transition-colors ${mapType === 'satellite' ? 'bg-slate-200 border-white text-slate-900' : 'bg-transparent border-slate-700 text-slate-500 hover:text-slate-300'}`}>Satellite</button>
+                 <button onClick={() => setMapType('topography')} className={`py-1.5 px-2 text-[10px] uppercase tracking-widest font-bold rounded border transition-colors ${mapType === 'topography' ? 'bg-slate-200 border-white text-slate-900' : 'bg-transparent border-slate-700 text-slate-500 hover:text-slate-300'}`}>Topography</button>
+                 <button onClick={() => setMapType('terrain')} className={`py-1.5 px-2 text-[10px] uppercase tracking-widest font-bold rounded border transition-colors ${mapType === 'terrain' ? 'bg-slate-200 border-white text-slate-900' : 'bg-transparent border-slate-700 text-slate-500 hover:text-slate-300'}`}>Terrain (Color)</button>
+                 <button onClick={() => setMapType('dark')} className={`py-1.5 px-2 text-[10px] uppercase tracking-widest font-bold rounded border transition-colors ${mapType === 'dark' ? 'bg-slate-200 border-white text-slate-900' : 'bg-transparent border-slate-700 text-slate-500 hover:text-slate-300'}`}>Dark</button>
+               </div>
+            </div>
+
           </div>
         </div>
+      </div>
+
+      {/* --- TEMPORAL TIMELINE SCRUBBER (BOTTOM) --- */}
+      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-10 pointer-events-auto">
+         <div className="bg-slate-900/90 border border-slate-700 p-4 rounded-xl backdrop-blur-md shadow-2xl flex items-center space-x-6 w-[600px]">
+            <button 
+              onClick={() => setIsPlaying(!isPlaying)}
+              className="w-12 h-12 rounded-full border-2 border-blue-500 flex items-center justify-center text-blue-400 hover:bg-blue-900/50 hover:text-white hover:border-white transition-all focus:outline-none"
+            >
+              {isPlaying ? <span className="block w-4 h-4 bg-current"></span> : <span className="block w-0 h-0 border-y-8 border-y-transparent border-l-[14px] border-l-current ml-1"></span>}
+            </button>
+            <div className="flex-1">
+              <div className="flex justify-between items-end mb-2">
+                 <span className="text-[10px] text-slate-400 font-bold tracking-widest uppercase">Temporal Timeline</span>
+                 <span className="text-xs font-mono font-bold text-white">{formatUTCTime(playbackTime)}</span>
+              </div>
+              <div className="relative w-full h-2 bg-slate-800 rounded-full cursor-pointer"
+                   onClick={(e) => {
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const ratio = (e.clientX - rect.left) / rect.width;
+                      setPlaybackTime(minTime + (ratio * (maxTime - minTime)));
+                      setIsPlaying(false);
+                   }}>
+                 <div className="absolute top-0 left-0 h-full bg-blue-500 rounded-full" style={{ width: `${Math.max(0, Math.min(100, scrubberProgress))}%` }}></div>
+                 <div className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white border-2 border-blue-500 rounded-full shadow-[0_0_10px_rgba(59,130,246,0.8)]" style={{ left: `calc(${Math.max(0, Math.min(100, scrubberProgress))}% - 8px)` }}></div>
+              </div>
+            </div>
+         </div>
       </div>
 
       {/* --- SIDEBAR PANEL (RIGHT) --- */}
       <div className="absolute inset-y-0 right-0 w-96 bg-slate-900 border-l border-slate-700 shadow-2xl z-10 flex flex-col pointer-events-auto">
         <div className="p-6 border-b border-slate-700 bg-slate-800">
-          <h2 className="text-white font-black tracking-wide text-xl uppercase">Priority Targets</h2>
-          <p className="text-xs text-slate-400 mt-1 font-mono">Global Top 10 ({currentTimeframe === 'hour' ? '1H' : currentTimeframe === 'day' ? '24H' : '7D'})</p>
+          <h2 className="text-white font-black tracking-wide text-xl uppercase mb-3">Priority Targets</h2>
+          
+          <div className="flex space-x-1 mb-2">
+            <button onClick={() => setSortMode('MAGNITUDE')} className={`flex-1 py-1.5 px-2 text-[9px] uppercase tracking-widest font-bold rounded border transition-colors ${sortMode === 'MAGNITUDE' ? 'bg-blue-600/30 border-blue-500 text-blue-300' : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-300'}`}>Magnitude</button>
+            <button onClick={() => setSortMode('RECENT')} className={`flex-1 py-1.5 px-2 text-[9px] uppercase tracking-widest font-bold rounded border transition-colors ${sortMode === 'RECENT' ? 'bg-blue-600/30 border-blue-500 text-blue-300' : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-300'}`}>Recent</button>
+            <button onClick={() => setSortMode('PROXIMITY')} disabled={!userLocation} className={`flex-1 py-1.5 px-2 text-[9px] uppercase tracking-widest font-bold rounded border transition-colors ${!userLocation ? 'opacity-50 cursor-not-allowed' : sortMode === 'PROXIMITY' ? 'bg-blue-600/30 border-blue-500 text-blue-300' : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-300'}`}>Proximity</button>
+          </div>
         </div>
         
         <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-3 custom-scrollbar">
@@ -519,6 +668,8 @@ export default function App() {
                 : 'border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.3)] scale-[1.02]'
                 : 'border-slate-700 hover:border-slate-500 hover:bg-slate-800';
 
+            const dist = userLocation ? calculateHaversineDistance(userLocation.lat, userLocation.lng, quake.coordinates.latitude, quake.coordinates.longitude) : null;
+
             return (
               <div 
                 key={quake.id} 
@@ -529,14 +680,19 @@ export default function App() {
                   <span className={`font-black text-2xl leading-none ${quake.magnitude > 5 ? 'text-red-500' : quake.magnitude > 3 ? 'text-orange-500' : 'text-blue-500'}`}>
                     {quake.magnitude.toFixed(1)}
                   </span>
-                  <span className="text-xs text-slate-400 font-mono bg-slate-900 px-2 py-1 rounded border border-slate-700">{formatUTCTime(quake.time).split(' ')[0]}</span>
+                  <span className="text-[10px] text-slate-400 font-mono bg-slate-900 px-2 py-1 rounded border border-slate-700">{formatUTCTime(quake.time).split(' ')[1]}</span>
                 </div>
                 <p className="text-sm text-slate-300 font-medium whitespace-normal leading-snug">{quake.place}</p>
-                {quake.tsunami === 1 && (
-                  <div className="mt-2 text-[9px] text-white bg-fuchsia-600 px-1.5 py-0.5 inline-block font-bold rounded uppercase tracking-wider">
-                    Tsunami Risk
-                  </div>
-                )}
+                
+                <div className="mt-3 flex items-center justify-between">
+                  {quake.tsunami === 1 ? (
+                    <div className="text-[9px] text-white bg-fuchsia-600 px-1.5 py-0.5 inline-block font-bold rounded uppercase tracking-wider">Tsunami Risk</div>
+                  ) : <div></div>}
+                  
+                  {dist && sortMode === 'PROXIMITY' && (
+                     <div className="text-[10px] text-green-400 font-mono font-bold">{dist.toLocaleString()} km away</div>
+                  )}
+                </div>
               </div>
             )
           })}
@@ -547,23 +703,24 @@ export default function App() {
       <Canvas camera={{ position: [0, 0, 6], fov: 60 }} className="block w-full h-full absolute inset-0 z-0" onPointerMissed={() => triggerQuakeSelect(null)}>
         <ViewportAdjuster />
 
-        <ambientLight intensity={1.5} />
-        <directionalLight position={[5, 3, 5]} intensity={3.5} castShadow />
-        <hemisphereLight skyColor="#ffffff" groundColor="#001144" intensity={1.0} />
-
-        <Stars radius={100} depth={50} count={5000} factor={4} saturation={0} fade speed={1} />
+        <ambientLight intensity={mapType === 'terrain' || mapType === 'topography' ? 0.6 : 1.5} />
+        <directionalLight position={[5, 3, 5]} intensity={mapType === 'terrain' || mapType === 'topography' ? 1.2 : 3.5} castShadow />
+        
+        {/* Only show stars if not in a light mode */}
+        {(mapType !== 'terrain' && mapType !== 'topography') && <Stars radius={100} depth={50} count={5000} factor={4} saturation={0} fade speed={1} />}
+        
         <OrbitControls enablePan={false} enableZoom={true} minDistance={2.5} maxDistance={10} />
         
         <group rotation={[0.41, 0, 0]}>
           <React.Suspense fallback={<mesh><sphereGeometry args={[GLOBE_RADIUS, 16, 16]} /><meshBasicMaterial color="gray" wireframe /></mesh>}>
-            <Globe />
+            <Globe mapType={mapType} />
           </React.Suspense>
           
-          <TectonicPlates targetCoords={activeRegion} />
-          {activeRegion && <RegionalReticle targetCoords={activeRegion} />}
+          <TectonicPlates targetCoords={activeRegion} mapType={mapType} />
+          {activeRegion && <RegionalReticle targetCoords={activeRegion} mapType={mapType} />}
 
           {visibleQuakes.map((quake) => (
-            <QuakeRipple key={quake.id} quake={quake} activeQuake={activeQuake} triggerQuakeSelect={triggerQuakeSelect} userLocation={userLocation} />
+            <QuakeRipple key={quake.id} quake={quake} activeQuake={activeQuake} triggerQuakeSelect={triggerQuakeSelect} userLocation={userLocation} mapType={mapType} />
           ))}
         </group>
         <CameraRig targetCoords={cameraTarget} />
