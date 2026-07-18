@@ -68,7 +68,6 @@ It combines modern frontend rendering, real-time networking, and geospatial visu
 - Terrain Mode
 - Dark Tactical Mode
 
----
 
 ## 📡 Live Earthquake Monitoring
 
@@ -77,7 +76,6 @@ It combines modern frontend rendering, real-time networking, and geospatial visu
 - Real-time event rendering
 - Earthquake clustering
 
----
 
 ## 🎯 Smart Event Visualization
 
@@ -86,7 +84,6 @@ It combines modern frontend rendering, real-time networking, and geospatial visu
 - Animated event markers
 - Clickable earthquake events
 
----
 
 ## 📊 Command Dashboard
 
@@ -96,7 +93,6 @@ It combines modern frontend rendering, real-time networking, and geospatial visu
 - Priority target panel
 - Threat legend
 
----
 
 ## ⚠ Threat Classification
 
@@ -108,7 +104,6 @@ Severe
 
 Tsunami Alerts
 
----
 
 ## ⏳ Timeline Playback
 
@@ -118,7 +113,6 @@ Replay historical earthquake activity.
 - 24 Hours
 - 7 Days
 
----
 
 ## 📍 Tactical Navigation
 
@@ -129,7 +123,6 @@ Quick jump presets:
 - Himalayas
 - Mid Atlantic Ridge
 
----
 
 ## 🔍 Interactive Event Inspection
 
@@ -149,25 +142,21 @@ Clicking any event displays
 
 ![](docs/screenshots/dashboard.png)
 
----
 
 ## Event Information Panel
 
 ![](docs/screenshots/event-popup.png)
 
----
 
 ## Timeline Playback
 
 ![](docs/screenshots/timeline.png)
 
----
 
 ## Dark Tactical Mode
 
 ![](docs/screenshots/dark-mode.png)
 
----
 
 ## Terrain Visualization
 
@@ -179,7 +168,6 @@ Clicking any event displays
 
 ![](docs/architecture/high-level.png)
 
----
 
 ## Data Flow
 
@@ -208,13 +196,11 @@ Interactive Globe
 
 ![](docs/architecture/visualization-pipeline.png)
 
----
 
 # ⚡ Event Processing Workflow
 
 ![](docs/architecture/event-processing.png)
 
----
 
 # 🛰 Rendering Pipeline
 
@@ -261,7 +247,6 @@ Interactive Globe
 - Cloud layer
 - Night mode
 
----
 
 ## Marker Rendering
 
@@ -270,7 +255,6 @@ Interactive Globe
 - Animated pulses
 - Depth indication
 
----
 
 ## Camera
 
@@ -302,17 +286,15 @@ Interactive Globe
 ```
 Seismic.NET
 │
-├── backend
+├── backend-service
 │
-├── frontend
+├── frontend-client
 │
 ├── docs
 │   ├── architecture
 │   ├── screenshots
 │   ├── demo.gif
 │   └── banner.png
-│
-├── public
 │
 └── README.md
 ```
