@@ -53,7 +53,7 @@ It combines modern frontend rendering, real-time networking, and geospatial visu
 # 🎬 Demo
 
 <p align="center">
-<img src="docs/demo.gif">
+<img src="docs/seismic.net.mp4">
 </p>
 
 ---
@@ -153,20 +153,37 @@ Clicking any event displays
 ![](docs/screenshots/timeline.png)
 
 
-## Dark Tactical Mode
-
-![](docs/screenshots/dark-mode.png)
-
-
 ## Terrain Visualization
 
 ![](docs/screenshots/terrain-mode.png)
+
+
+## Tactical Overrides
+
+![](docs/screenshots/tactical-overrides-ring-of-fire.png)
 
 ---
 
 # 🏗 System Architecture
 
-![](docs/architecture/high-level.png)
+```
+    React
+      │
+      ▼
+ Node Backend
+      │
+      ▼
+  USGS Feed
+      │
+      ▼
+  Websocket
+      │
+      ▼
+Three.js Globe
+      │
+      ▼
+     User
+```
 
 
 ## Data Flow
@@ -194,12 +211,43 @@ Interactive Globe
 
 # 🌐 Visualization Pipeline
 
-![](docs/architecture/visualization-pipeline.png)
+```
+   GeoJSON
+      │
+      ▼
+ Coordinates
+      │
+      ▼
+Sphere Projection
+      │
+      ▼
+Three.js Mesh
+      │
+      ▼
+   Shaders
+      │
+      ▼
+Earthquake Markers
+```
 
 
-# ⚡ Event Processing Workflow
+# ⚡ User Interaction
 
-![](docs/architecture/event-processing.png)
+```
+  User Click
+      │
+      ▼
+  Raycaster
+      │
+      ▼
+   Marker
+      │
+      ▼
+ Earthquake Data
+      │
+      ▼
+    Popup
+ ```
 
 
 # 🛰 Rendering Pipeline
@@ -293,7 +341,7 @@ Seismic.NET
 ├── docs
 │   ├── architecture
 │   ├── screenshots
-│   ├── demo.gif
+│   ├── seismic.net.mp4
 │   └── banner.png
 │
 └── README.md
@@ -306,7 +354,7 @@ Seismic.NET
 ## Clone
 
 ```bash
-git clone https://github.com/yourusername/seismic.net.git
+git clone https://github.com/lavyajn/seismic-visualizer
 ```
 
 ---

@@ -141,7 +141,6 @@ const Globe = ({ mapType }) => {
       <mesh receiveShadow castShadow>
         <sphereGeometry args={[GLOBE_RADIUS, 64, 64]} />
         {mapType === 'terrain' ? (
-          // We feed 'waterMap' into the map prop purely so the shader above can read it to paint the colors
           <meshStandardMaterial 
             map={waterMap} 
             normalMap={normalMap} 
@@ -534,8 +533,12 @@ export default function App() {
     <div className="w-screen h-screen bg-black overflow-hidden relative font-sans text-white m-0 p-0 flex">
       
       {/* --- HUD OVERLAY (LEFT) --- */}
-      <div className="absolute inset-y-0 left-0 pointer-events-none z-10 p-8 flex flex-col justify-between">
-        <div>
+      {/* 
+        FIX: Added Tailwind classes to hide the scrollbar across all browsers:
+        [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] 
+      */}
+      <div className="absolute inset-y-0 left-0 z-10 p-8 flex flex-col justify-between max-h-screen overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] pointer-events-none">
+        <div className="pointer-events-auto">
           <h1 className="text-5xl font-black text-blue-500 tracking-tight drop-shadow-md mb-4">SEISMIC</h1>
           <div className="bg-slate-900/80 border border-slate-700 p-4 rounded-lg backdrop-blur-md space-y-2 inline-block shadow-lg">
             <p className="text-sm text-slate-300 font-mono">STATUS: <span className={readyState === 1 ? 'text-blue-500 font-bold' : 'text-red-500 font-bold'}>[{connectionStatus}]</span></p>
@@ -546,7 +549,7 @@ export default function App() {
           </div>
         </div>
 
-        <div className="space-y-4 pointer-events-auto inline-block w-max">
+        <div className="space-y-4 pointer-events-auto inline-block w-max mt-4">
           
           <div className="bg-slate-900/80 border border-slate-700 p-2 rounded-lg backdrop-blur-md flex space-x-2 shadow-lg">
             {['hour', 'day', 'week'].map((frame) => (
@@ -604,11 +607,10 @@ export default function App() {
 
             <div className="mt-4 pt-3 border-t border-slate-700">
                <h3 className="text-slate-500 text-[10px] font-bold uppercase tracking-widest mb-2">Map Interface</h3>
+               {/* FIX 2: Removed the 4 map options, reduced to 2 (Satellite and Topography) */}
                <div className="grid grid-cols-2 gap-1">
                  <button onClick={() => setMapType('satellite')} className={`py-1.5 px-2 text-[10px] uppercase tracking-widest font-bold rounded border transition-colors ${mapType === 'satellite' ? 'bg-slate-200 border-white text-slate-900' : 'bg-transparent border-slate-700 text-slate-500 hover:text-slate-300'}`}>Satellite</button>
                  <button onClick={() => setMapType('topography')} className={`py-1.5 px-2 text-[10px] uppercase tracking-widest font-bold rounded border transition-colors ${mapType === 'topography' ? 'bg-slate-200 border-white text-slate-900' : 'bg-transparent border-slate-700 text-slate-500 hover:text-slate-300'}`}>Topography</button>
-                 <button onClick={() => setMapType('terrain')} className={`py-1.5 px-2 text-[10px] uppercase tracking-widest font-bold rounded border transition-colors ${mapType === 'terrain' ? 'bg-slate-200 border-white text-slate-900' : 'bg-transparent border-slate-700 text-slate-500 hover:text-slate-300'}`}>Terrain (Color)</button>
-                 <button onClick={() => setMapType('dark')} className={`py-1.5 px-2 text-[10px] uppercase tracking-widest font-bold rounded border transition-colors ${mapType === 'dark' ? 'bg-slate-200 border-white text-slate-900' : 'bg-transparent border-slate-700 text-slate-500 hover:text-slate-300'}`}>Dark</button>
                </div>
             </div>
 
@@ -656,7 +658,8 @@ export default function App() {
           </div>
         </div>
         
-        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-3 custom-scrollbar">
+        {/* FIX: Applied the same invisible scrollbar fix to the right sidebar */}
+        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 space-y-3 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
           {topQuakes.length === 0 && (
             <div className="text-slate-500 text-sm font-mono text-center pt-10">NO THREATS FOUND IN FILTER</div>
           )}
