@@ -53,7 +53,7 @@ It combines modern frontend rendering, real-time networking, and geospatial visu
 # 🎬 Demo
 
 <p align="center">
-<img src="docs/seismic.net.mp4">
+<img src="docs/seismic.mp4">
 </p>
 
 ---
