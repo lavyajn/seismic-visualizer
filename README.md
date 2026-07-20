@@ -339,7 +339,6 @@ Seismic.NET
 ├── frontend-client
 │
 ├── docs
-│   ├── architecture
 │   ├── screenshots
 │   ├── seismic.net.mp4
 │   └── banner.png
