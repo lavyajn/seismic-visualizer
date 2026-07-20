@@ -53,7 +53,7 @@ It combines modern frontend rendering, real-time networking, and geospatial visu
 # 🎬 Demo
 
 <p align="center">
-<video src="https://github.com/lavyajn/seismic-visualizer/issues/1#issue-4927169418"></video>
+<img src="./docs/seismic_demo.gif">
 </p>
 
 ---
